@@ -1,0 +1,32 @@
+name: clover_anime
+description: Clover Anime - premium anime streaming app.
+publish_to: "none"
+version: 3.0.0+9
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: ^3.6.0
+  firebase_auth: ^5.3.1
+  cloud_firestore: ^5.4.4
+  http: ^1.2.2
+  crypto: ^3.0.5
+  cached_network_image: ^3.4.1
+  shared_preferences: ^2.3.2
+  video_player: ^2.9.2
+  wakelock_plus: ^1.2.8
+  url_launcher: ^6.3.1
+  package_info_plus: ^8.0.3
+  google_fonts: ^6.2.1
+  shimmer: ^3.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

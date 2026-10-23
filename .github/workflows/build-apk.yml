@@ -1,0 +1,70 @@
+name: Build Clover Anime APK
+
+on:
+  push:
+    paths:
+      - "flutter_app/**"
+      - ".github/workflows/build-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter_app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android project
+        run: |
+          flutter create --platforms=android --org com.clovranime --project-name clover_anime .
+          rm -rf test
+
+      - name: Configure Android app
+        run: |
+          M=android/app/src/main/AndroidManifest.xml
+          sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <application android:usesCleartextTraffic="true"|' $M
+          sed -i 's|android:label="clover_anime"|android:label="Clover Anime"|' $M
+          G=$(ls android/app/build.gradle* | head -1)
+          sed -i -E 's|applicationId = "[^"]+"|applicationId = "com.clovranime.anime"|; s|applicationId "[^"]+"|applicationId "com.clovranime.anime"|' $G
+          sed -i -E 's|minSdk = flutter.minSdkVersion|minSdk = 23|; s|minSdkVersion flutter.minSdkVersion|minSdkVersion 23|' $G
+          grep -n "applicationId\|minSdk" $G
+          cat $M
+
+      - name: App icon
+        run: |
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            if [ -f android_res/mipmap-$d/ic_launcher.png ]; then
+              cp android_res/mipmap-$d/ic_launcher.png android/app/src/main/res/mipmap-$d/ic_launcher.png
+            fi
+          done
+
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - run: flutter build apk --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clover-anime-apk
+          path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Clover Anime build ${{ github.run_number }}
+          files: flutter_app/build/app/outputs/flutter-apk/app-release.apk
