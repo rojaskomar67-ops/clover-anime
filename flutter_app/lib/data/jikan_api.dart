@@ -12,8 +12,17 @@ class JikanApi {
   static const _base = 'https://api.jikan.moe/v4/';
   final _cache = <String, dynamic>{};
   DateTime _last = DateTime.fromMillisecondsSinceEpoch(0);
+  Future<void> _queue = Future.value();
 
-  Future<dynamic> _get(String path) async {
+  /// Runs requests one at a time so the catalog never rate-limits us.
+  Future<dynamic> _get(String path) {
+    if (_cache.containsKey(path)) return Future.value(_cache[path]);
+    final next = _queue.then((_) => _fetch(path));
+    _queue = next.then((_) {}, onError: (_) {});
+    return next;
+  }
+
+  Future<dynamic> _fetch(String path) async {
     if (_cache.containsKey(path)) return _cache[path];
     // Jikan allows ~3 requests/second; space calls out.
     for (var attempt = 0; attempt < 3; attempt++) {

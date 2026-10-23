@@ -2,11 +2,13 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'core/theme.dart';
 import 'data/auth_service.dart';
 import 'data/library.dart';
+import 'data/notifications.dart';
 import 'screens/discover_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/profile_screen.dart';
@@ -29,6 +31,7 @@ Future<void> main() async {
     systemNavigationBarColor: AppColors.bg,
   ));
   await Library.instance.init();
+  await Notifier.instance.init();
   try {
     await Firebase.initializeApp(options: firebaseOptions);
     AuthService.instance.firebaseReady = true;
@@ -113,6 +116,32 @@ class _RootShellState extends State<RootShell> {
     super.initState();
     AuthService.instance.addListener(_checkUpdate);
     _checkUpdate();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _askNotifications());
+  }
+
+  Future<void> _askNotifications() async {
+    final p = await SharedPreferences.getInstance();
+    if (p.getBool('askedNotifs') == true || !mounted) return;
+    await p.setBool('askedNotifs', true);
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        icon: const Icon(Icons.notifications_active_rounded, color: AppColors.primary, size: 40),
+        title: const Text('Stay in the loop'),
+        content: const Text('Allow notifications to hear about new episodes, updates and announcements.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Not now')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Allow')),
+        ],
+      ),
+    );
+    if (yes == true) {
+      await Notifier.instance.requestPermission();
+    } else {
+      await Notifier.instance.setEnabled(false);
+    }
   }
 
   @override
@@ -152,50 +181,101 @@ class _RootShellState extends State<RootShell> {
     );
   }
 
+  static const _dests = [
+    (Icons.home_outlined, Icons.home_rounded, 'Home'),
+    (Icons.explore_outlined, Icons.explore_rounded, 'Discover'),
+    (Icons.search_rounded, Icons.search_rounded, 'Search'),
+    (Icons.bookmark_outline_rounded, Icons.bookmark_rounded, 'My List'),
+    (Icons.person_outline_rounded, Icons.person_rounded, 'Profile'),
+  ];
+
+  void _select(int i) {
+    HapticFeedback.selectionClick();
+    setState(() => _index = i);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      extendBody: true,
-      body: IndexedStack(index: _index, children: _pages),
-      bottomNavigationBar: Container(
-        decoration: const BoxDecoration(
-          color: AppColors.surface,
-          border: Border(top: BorderSide(color: AppColors.border)),
-        ),
-        child: NavigationBar(
-          backgroundColor: AppColors.surface,
-          indicatorColor: AppColors.primary.withValues(alpha: 0.18),
-          height: 66,
-          selectedIndex: _index,
-          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-          onDestinationSelected: (i) {
-            HapticFeedback.selectionClick();
-            setState(() => _index = i);
-          },
-          destinations: const [
-            NavigationDestination(
-                icon: Icon(Icons.home_outlined),
-                selectedIcon: Icon(Icons.home_rounded, color: AppColors.primary),
-                label: 'Home'),
-            NavigationDestination(
-                icon: Icon(Icons.explore_outlined),
-                selectedIcon: Icon(Icons.explore_rounded, color: AppColors.primary),
-                label: 'Discover'),
-            NavigationDestination(
-                icon: Icon(Icons.search_rounded),
-                selectedIcon: Icon(Icons.search_rounded, color: AppColors.primary),
-                label: 'Search'),
-            NavigationDestination(
-                icon: Icon(Icons.bookmark_outline_rounded),
-                selectedIcon: Icon(Icons.bookmark_rounded, color: AppColors.primary),
-                label: 'My List'),
-            NavigationDestination(
-                icon: Icon(Icons.person_outline_rounded),
-                selectedIcon: Icon(Icons.person_rounded, color: AppColors.primary),
-                label: 'Profile'),
-          ],
-        ),
-      ),
+    return ListenableBuilder(
+      listenable: AuthService.instance,
+      builder: (context, _) {
+        final auth = AuthService.instance;
+        if (auth.features.maintenance && !auth.isAdmin) {
+          return Scaffold(
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.construction_rounded, size: 64, color: AppColors.accent),
+                  const SizedBox(height: 16),
+                  const Text('Under maintenance', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 8),
+                  Text(auth.features.maintenanceMessage,
+                      textAlign: TextAlign.center, style: const TextStyle(color: AppColors.textDim)),
+                ]),
+              ),
+            ),
+          );
+        }
+        final wide = MediaQuery.of(context).size.width >= 720;
+        final body = IndexedStack(index: _index, children: _pages);
+        if (wide) {
+          return Scaffold(
+            body: Row(children: [
+              NavigationRail(
+                backgroundColor: AppColors.surface,
+                selectedIndex: _index,
+                onDestinationSelected: _select,
+                labelType: NavigationRailLabelType.all,
+                indicatorColor: AppColors.primary.withValues(alpha: 0.18),
+                leading: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  child: ShaderMask(
+                    shaderCallback: (r) => AppColors.primaryGradient.createShader(r),
+                    child: const Icon(Icons.eco_rounded, size: 34, color: Colors.white),
+                  ),
+                ),
+                destinations: [
+                  for (final d in _dests)
+                    NavigationRailDestination(
+                      icon: Icon(d.$1),
+                      selectedIcon: Icon(d.$2, color: AppColors.primary),
+                      label: Text(d.$3),
+                    ),
+                ],
+              ),
+              const VerticalDivider(width: 1, color: AppColors.border),
+              Expanded(child: body),
+            ]),
+          );
+        }
+        return Scaffold(
+          extendBody: true,
+          body: body,
+          bottomNavigationBar: Container(
+            decoration: const BoxDecoration(
+              color: AppColors.surface,
+              border: Border(top: BorderSide(color: AppColors.border)),
+            ),
+            child: NavigationBar(
+              backgroundColor: AppColors.surface,
+              indicatorColor: AppColors.primary.withValues(alpha: 0.18),
+              height: 66,
+              selectedIndex: _index,
+              labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+              onDestinationSelected: _select,
+              destinations: [
+                for (final d in _dests)
+                  NavigationDestination(
+                    icon: Icon(d.$1),
+                    selectedIcon: Icon(d.$2, color: AppColors.primary),
+                    label: d.$3,
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

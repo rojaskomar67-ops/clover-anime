@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
+import '../data/hianime_source.dart';
 import '../data/jikan_api.dart';
 import '../data/models.dart';
 import '../widgets/common.dart';
@@ -13,10 +14,10 @@ class DiscoverScreen extends StatefulWidget {
 }
 
 class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProviderStateMixin {
-  late final _tabs = TabController(length: 2, vsync: this);
-  late Future<List<Genre>> _genres = JikanApi.instance.genres();
+  late final _tabs = TabController(length: 4, vsync: this);
   static const _days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
   int _day = DateTime.now().weekday - 1;
+  final src = HiAnimeSource.instance;
 
   static const _palette = [
     Color(0xFF3DDC84), Color(0xFFFFB547), Color(0xFFFF5470), Color(0xFF7FB8FF),
@@ -28,6 +29,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
     _tabs.dispose();
     super.dispose();
   }
+
+  void _open(String title, Future<List<AnimeRef>> Function(int) loader) =>
+      Navigator.of(context).push(fadeRoute(ListScreen(title: title, loader: loader)));
 
   @override
   Widget build(BuildContext context) {
@@ -43,86 +47,91 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
         ),
         TabBar(
           controller: _tabs,
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
           indicatorColor: AppColors.primary,
           labelColor: AppColors.primary,
           unselectedLabelColor: AppColors.textDim,
           dividerColor: Colors.transparent,
           labelStyle: const TextStyle(fontWeight: FontWeight.w700),
-          tabs: const [Tab(text: 'Genres'), Tab(text: 'Schedule')],
+          tabs: const [Tab(text: 'Categories'), Tab(text: 'Genres'), Tab(text: 'A-Z'), Tab(text: 'Schedule')],
         ),
         Expanded(
-          child: TabBarView(controller: _tabs, children: [_genreGrid(), _schedule()]),
+          child: TabBarView(
+            controller: _tabs,
+            children: [_categories(), _genres(), _az(), _schedule()],
+          ),
         ),
       ]),
     );
   }
 
-  Widget _genreGrid() => FutureBuilder<List<Genre>>(
-        future: _genres,
-        builder: (context, snap) {
-          if (snap.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator(color: AppColors.primary));
-          }
-          final g = snap.data ?? [];
-          if (g.isEmpty) {
-            return EmptyState(
-              icon: Icons.cloud_off_rounded,
-              title: "Couldn't load genres",
-              action: FilledButton(
-                onPressed: () => setState(() => _genres = JikanApi.instance.genres()),
-                child: const Text('Retry'),
-              ),
-            );
-          }
-          return GridView.builder(
-            physics: const BouncingScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 110),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              childAspectRatio: 2.4,
-            ),
-            itemCount: g.length,
-            itemBuilder: (_, i) {
-              final c = _palette[i % _palette.length];
-              return FadeIn(
-                delay: Duration(milliseconds: 20 * (i % 12)),
-                child: Pressable(
-                  onTap: () => Navigator.of(context).push(fadeRoute(ListScreen(
-                    title: g[i].name,
-                    loader: (p) => JikanApi.instance.byGenre(g[i].id, page: p),
-                  ))),
-                  child: Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      gradient: LinearGradient(
-                        colors: [c.withValues(alpha: 0.35), c.withValues(alpha: 0.08)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      border: Border.all(color: c.withValues(alpha: 0.35)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(g[i].name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
-                        Text('${g[i].count} titles',
-                            style: const TextStyle(color: AppColors.textDim, fontSize: 12)),
-                      ],
-                    ),
+  Widget _tileGrid(int count, String Function(int) label, VoidCallback Function(int) onTap,
+          {double aspect = 2.4, IconData? icon}) =>
+      GridView.builder(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 110),
+        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 220,
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          childAspectRatio: aspect,
+        ),
+        itemCount: count,
+        itemBuilder: (_, i) {
+          final c = _palette[i % _palette.length];
+          return FadeIn(
+            delay: Duration(milliseconds: 20 * (i % 12)),
+            child: Pressable(
+              onTap: onTap(i),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  gradient: LinearGradient(
+                    colors: [c.withValues(alpha: 0.35), c.withValues(alpha: 0.08)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
+                  border: Border.all(color: c.withValues(alpha: 0.35)),
                 ),
-              );
-            },
+                child: Row(children: [
+                  if (icon != null) ...[Icon(icon, color: c, size: 20), const SizedBox(width: 8)],
+                  Expanded(
+                    child: Text(label(i),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                  ),
+                ]),
+              ),
+            ),
           );
         },
       );
+
+  Widget _categories() => _tileGrid(
+        kCategories.length,
+        (i) => kCategories[i].title,
+        (i) => () => _open(kCategories[i].title, (p) => src.category(kCategories[i].path, page: p)),
+        icon: Icons.local_movies_rounded,
+      );
+
+  Widget _genres() => _tileGrid(
+        kGenres.length,
+        (i) => genreLabel(kGenres[i]),
+        (i) => () => _open(genreLabel(kGenres[i]), (p) => src.genre(kGenres[i], page: p)),
+      );
+
+  Widget _az() {
+    final letters = ['all', '0-9', ...List.generate(26, (i) => String.fromCharCode(97 + i))];
+    return _tileGrid(
+      letters.length,
+      (i) => letters[i].toUpperCase(),
+      (i) => () => _open('A-Z: ${letters[i].toUpperCase()}', (p) => src.azList(letters[i], page: p)),
+      aspect: 1.6,
+    );
+  }
 
   Widget _schedule() => Column(children: [
         SizedBox(
@@ -136,10 +145,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
               label: Text(_days[i].substring(0, 3).toUpperCase()),
               selected: _day == i,
               selectedColor: AppColors.primary,
-              labelStyle: TextStyle(
-                color: _day == i ? Colors.black : AppColors.text,
-                fontWeight: FontWeight.w700,
-              ),
+              labelStyle: TextStyle(color: _day == i ? Colors.black : AppColors.text, fontWeight: FontWeight.w700),
               showCheckmark: false,
               onSelected: (_) => setState(() => _day = i),
             ),
@@ -155,7 +161,13 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
               }
               final l = snap.data ?? [];
               if (l.isEmpty) {
-                return const EmptyState(icon: Icons.event_busy_rounded, title: 'No episodes scheduled');
+                return EmptyState(
+                  icon: Icons.event_busy_rounded,
+                  title: snap.hasError ? "Couldn't load schedule" : 'No episodes scheduled',
+                  action: snap.hasError
+                      ? FilledButton(onPressed: () => setState(() {}), child: const Text('Retry'))
+                      : null,
+                );
               }
               return PosterGrid(items: l);
             },

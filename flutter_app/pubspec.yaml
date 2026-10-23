@@ -1,7 +1,7 @@
 name: clover_anime
 description: Clover Anime - premium anime streaming app.
 publish_to: "none"
-version: 3.0.0+9
+version: 3.1.0+10
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -22,6 +22,7 @@ dependencies:
   package_info_plus: ^8.0.3
   google_fonts: ^6.2.1
   shimmer: ^3.0.0
+  flutter_local_notifications: ^18.0.1
 
 dev_dependencies:
   flutter_test:

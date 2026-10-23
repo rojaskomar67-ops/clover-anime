@@ -5,6 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 import 'clover_api.dart';
+import 'hianime_source.dart';
+import 'notifications.dart';
 import 'models.dart';
 
 /// Firebase auth + remote app config (same Firestore layout as the original app).
@@ -23,6 +25,8 @@ class AuthService extends ChangeNotifier {
   Set<String> adminEmails = {...defaultAdmins};
   Announcement? announcement;
   UpdateConfig? update;
+  AppFeatures features = AppFeatures();
+  int _lastBroadcast = DateTime.now().millisecondsSinceEpoch;
   final _subs = <StreamSubscription>[];
 
   FirebaseFirestore get _db => FirebaseFirestore.instance;
@@ -48,6 +52,26 @@ class AuthService extends ChangeNotifier {
       final d = s.data();
       update = d == null ? null : UpdateConfig.fromMap(d);
       notifyListeners();
+    }, onError: (_) {}));
+    _subs.add(_db.collection('app_config').doc('features').snapshots().listen((s) {
+      features = AppFeatures.fromMap(s.data() ?? {});
+      HiAnimeSource.instance.setMirrors(features.mirrors);
+      notifyListeners();
+    }, onError: (_) {}));
+    _subs.add(_db
+        .collection('broadcasts')
+        .where('createdAt', isGreaterThan: _lastBroadcast)
+        .snapshots()
+        .listen((s) {
+      for (final ch in s.docChanges) {
+        if (ch.type != DocumentChangeType.added) continue;
+        final d = ch.doc.data();
+        if (d == null) continue;
+        final at = (d['createdAt'] as num?)?.toInt() ?? 0;
+        if (at <= _lastBroadcast) continue;
+        _lastBroadcast = at;
+        Notifier.instance.show(d['title']?.toString() ?? 'Clover Anime', d['message']?.toString() ?? '');
+      }
     }, onError: (_) {}));
     _subs.add(_db.collection('app_config').doc('api').snapshots().listen((s) {
       final d = s.data();
@@ -179,5 +203,39 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  Future<void> saveFeatures(Map<String, dynamic> data) => _db
+      .collection('app_config')
+      .doc('features')
+      .set({...data, 'updatedAt': DateTime.now().millisecondsSinceEpoch}, SetOptions(merge: true));
+
   Future<void> deleteBroadcast(String id) => _db.collection('broadcasts').doc(id).delete();
+}
+
+/// Remote switches the admin controls (app_config/features).
+class AppFeatures {
+  final bool maintenance;
+  final String maintenanceMessage;
+  final Set<String> hiddenSections;
+  final List<String> mirrors;
+  final bool spotlightAutoplay;
+  final bool guestCanWatch;
+  final String welcomeMessage;
+  AppFeatures({
+    this.maintenance = false,
+    this.maintenanceMessage = 'We are improving Clover. Back soon!',
+    this.hiddenSections = const {},
+    this.mirrors = const [],
+    this.spotlightAutoplay = true,
+    this.guestCanWatch = true,
+    this.welcomeMessage = '',
+  });
+  factory AppFeatures.fromMap(Map<String, dynamic> m) => AppFeatures(
+        maintenance: m['maintenance'] == true,
+        maintenanceMessage: (m['maintenanceMessage'] ?? 'We are improving Clover. Back soon!').toString(),
+        hiddenSections: ((m['hiddenSections'] as List?) ?? []).map((e) => e.toString()).toSet(),
+        mirrors: ((m['mirrors'] as List?) ?? []).map((e) => e.toString()).toList(),
+        spotlightAutoplay: m['spotlightAutoplay'] != false,
+        guestCanWatch: m['guestCanWatch'] != false,
+        welcomeMessage: (m['welcomeMessage'] ?? '').toString(),
+      );
 }

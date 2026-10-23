@@ -4,6 +4,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../core/theme.dart';
 import '../data/auth_service.dart';
 import '../data/library.dart';
+import '../data/notifications.dart';
 import '../widgets/common.dart';
 import 'admin_screen.dart';
 
@@ -87,6 +88,7 @@ class ProfileScreen extends StatelessWidget {
               _switch('Auto-skip intro', lib.autoSkipIntro, lib.setAutoSkip),
               _switch('Subtitles on by default', lib.subtitlesOn, lib.setSubs),
               _switch('Prefer dubbed audio', lib.preferredType == 'dub', (v) => lib.setPrefType(v ? 'dub' : 'sub')),
+              _NotifSwitch(),
               const SizedBox(height: 10),
               const Text('Data', style: TextStyle(color: AppColors.textDim, fontWeight: FontWeight.w700)),
               _tile(Icons.history_toggle_off_rounded, 'Clear watch history', null, () {
@@ -232,5 +234,25 @@ class _SignInSheetState extends State<_SignInSheet> {
                 : const Text('Continue'),
           ),
         ]),
+      );
+}
+
+class _NotifSwitch extends StatefulWidget {
+  @override
+  State<_NotifSwitch> createState() => _NotifSwitchState();
+}
+
+class _NotifSwitchState extends State<_NotifSwitch> {
+  @override
+  Widget build(BuildContext context) => SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        activeTrackColor: AppColors.primary,
+        title: const Text('Notifications'),
+        subtitle: const Text('New episodes, updates and announcements', style: TextStyle(color: AppColors.textDim)),
+        value: Notifier.instance.enabled,
+        onChanged: (v) async {
+          await Notifier.instance.setEnabled(v);
+          setState(() {});
+        },
       );
 }

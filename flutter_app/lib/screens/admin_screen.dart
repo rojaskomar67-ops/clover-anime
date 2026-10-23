@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../core/theme.dart';
 import '../data/auth_service.dart';
 import '../data/clover_api.dart';
+import '../data/hianime_source.dart';
+import '../data/notifications.dart';
 import '../data/models.dart';
 import '../widgets/common.dart';
 
@@ -14,7 +16,7 @@ class AdminScreen extends StatelessWidget {
       return const Scaffold(body: EmptyState(icon: Icons.block_rounded, title: 'Admins only'));
     }
     return DefaultTabController(
-      length: 5,
+      length: 6,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Admin panel'),
@@ -26,6 +28,7 @@ class AdminScreen extends StatelessWidget {
             unselectedLabelColor: AppColors.textDim,
             dividerColor: Colors.transparent,
             tabs: [
+              Tab(icon: Icon(Icons.tune_rounded), text: 'App'),
               Tab(icon: Icon(Icons.campaign_rounded), text: 'Announce'),
               Tab(icon: Icon(Icons.send_rounded), text: 'Broadcasts'),
               Tab(icon: Icon(Icons.people_alt_rounded), text: 'Users'),
@@ -35,6 +38,7 @@ class AdminScreen extends StatelessWidget {
           ),
         ),
         body: const TabBarView(children: [
+          _AppTab(),
           _AnnouncementTab(),
           _BroadcastTab(),
           _UsersTab(),
@@ -426,5 +430,113 @@ class _ServerTabState extends State<_ServerTab> {
         ]),
         if (_test != null)
           Padding(padding: const EdgeInsets.only(top: 12), child: Text(_test!)),
+      ]);
+}
+
+class _AppTab extends StatefulWidget {
+  const _AppTab();
+  @override
+  State<_AppTab> createState() => _AppTabState();
+}
+
+class _AppTabState extends State<_AppTab> {
+  final f = AuthService.instance.features;
+  late bool _maint = f.maintenance;
+  late final _maintMsg = TextEditingController(text: f.maintenanceMessage);
+  late bool _autoplay = f.spotlightAutoplay;
+  late final Set<String> _hidden = {...f.hiddenSections};
+  late final _mirrors = TextEditingController(
+      text: (f.mirrors.isEmpty ? HiAnimeSource.instance.mirrors : f.mirrors).join('\n'));
+  bool _busy = false;
+
+  static const _sections = [
+    'Trending', 'Latest Episode', 'New On HiAnime', 'Top Upcoming', 'Top 10',
+    'Top Airing', 'Most Popular', 'Most Favorite', 'Movies', 'Dubbed Anime',
+  ];
+
+  Future<void> _save() async {
+    setState(() => _busy = true);
+    try {
+      await AuthService.instance.saveFeatures({
+        'maintenance': _maint,
+        'maintenanceMessage': _maintMsg.text.trim(),
+        'spotlightAutoplay': _autoplay,
+        'hiddenSections': _hidden.toList(),
+        'mirrors': _mirrors.text.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList(),
+      });
+      toast(context, 'App settings saved for everyone');
+    } catch (e) {
+      toast(context, 'Save failed: $e');
+    }
+    setState(() => _busy = false);
+  }
+
+  @override
+  Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(16), children: [
+        Card(
+          child: Column(children: [
+            SwitchListTile(
+              activeTrackColor: AppColors.danger,
+              title: const Text('Maintenance mode'),
+              subtitle: const Text('Blocks the app for everyone except admins'),
+              value: _maint,
+              onChanged: (v) => setState(() => _maint = v),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: _field(_maintMsg, 'Maintenance message', lines: 2),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 8),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          activeTrackColor: AppColors.accent,
+          title: const Text('Auto-slide home spotlight'),
+          value: _autoplay,
+          onChanged: (v) => setState(() => _autoplay = v),
+        ),
+        const SizedBox(height: 8),
+        const Text('Home sections shown', style: TextStyle(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: _sections
+              .map((sec) => FilterChip(
+                    label: Text(sec),
+                    selected: !_hidden.contains(sec),
+                    selectedColor: AppColors.accent.withValues(alpha: 0.3),
+                    onSelected: (on) => setState(() => on ? _hidden.remove(sec) : _hidden.add(sec)),
+                  ))
+              .toList(),
+        ),
+        const SizedBox(height: 16),
+        _field(_mirrors, 'Anime list website addresses (one per line, backups after the first)', lines: 3),
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () {
+                HiAnimeSource.instance.clearCache();
+                toast(context, 'Your app will reload fresh lists');
+              },
+              icon: const Icon(Icons.cleaning_services_rounded),
+              label: const Text('Clear list cache'),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () async {
+                await Notifier.instance.requestPermission();
+                await Notifier.instance.show('Clover test', 'Notifications are working!');
+              },
+              icon: const Icon(Icons.notifications_rounded),
+              label: const Text('Test notification'),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 18),
+        FilledButton(onPressed: _busy ? null : _save, child: const Text('Save app settings')),
       ]);
 }

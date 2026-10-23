@@ -47,12 +47,19 @@ jobs:
       - name: Configure Android app
         run: |
           M=android/app/src/main/AndroidManifest.xml
-          sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <application android:usesCleartextTraffic="true"|' $M
+          sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <application android:usesCleartextTraffic="true"|' $M
           sed -i 's|android:label="clover_anime"|android:label="Clover Anime"|' $M
           G=$(ls android/app/build.gradle* | head -1)
           sed -i -E 's|applicationId = "[^"]+"|applicationId = "com.clovranime.anime"|; s|applicationId "[^"]+"|applicationId "com.clovranime.anime"|' $G
           sed -i -E 's|minSdk = flutter.minSdkVersion|minSdk = 23|; s|minSdkVersion flutter.minSdkVersion|minSdkVersion 23|' $G
-          grep -n "applicationId\|minSdk" $G
+          if [[ "$G" == *.kts ]]; then
+            sed -i 's|compileOptions {|compileOptions {\n        isCoreLibraryDesugaringEnabled = true|' $G
+            printf '\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n}\n' >> $G
+          else
+            sed -i 's|compileOptions {|compileOptions {\n        coreLibraryDesugaringEnabled true|' $G
+            printf '\ndependencies {\n    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"\n}\n' >> $G
+          fi
+          grep -n "applicationId\|minSdk\|Desugar" $G
           cat $M
 
       - name: App icon
