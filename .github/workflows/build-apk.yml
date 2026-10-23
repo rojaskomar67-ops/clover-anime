@@ -29,6 +29,16 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Cache Gradle and packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.pub-cache
+          key: clover-build-${{ hashFiles('flutter_app/pubspec.yaml') }}
+          restore-keys: clover-build-
+
       - name: Generate Android project
         run: |
           flutter create --platforms=android --org com.clovranime --project-name clover_anime .
