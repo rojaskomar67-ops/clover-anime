@@ -10,6 +10,7 @@ import '../core/theme.dart';
 import '../data/clover_api.dart';
 import '../data/library.dart';
 import '../data/models.dart';
+import '../data/skip_times.dart';
 import '../widgets/common.dart' show toast;
 import '../widgets/player_extras.dart';
 
@@ -48,7 +49,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _ended = false;
   final _hold = HoldSpeed();
   final _sleep = SleepTimer();
-  bool _manualIntro = false;
+  List<SkipSegment> _segs = [];
+  int _segFor = -1;
+  final _skipped = <String>{};
 
   Episode get _ep => widget.episodes[_index];
   bool get _hasNext => _index < widget.episodes.length - 1;
@@ -94,6 +97,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _introSkipped = false;
       _ended = false;
       _stream = null;
+      _segs = [];
+      _segFor = -1;
+      _skipped.clear();
     });
     try {
       _servers = await CloverApi.instance.servers(_ep.id);
@@ -183,10 +189,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (c == null || !mounted) return;
     final v = c.value;
     final pos = v.position.inSeconds;
-    final intro = _stream?.intro;
-    if (lib.autoSkipIntro && intro != null && !_introSkipped && pos >= intro.start && pos < intro.end - 1) {
-      _introSkipped = true;
-      c.seekTo(Duration(seconds: intro.end));
+    _ensureSegs(v);
+    final p = v.position.inMilliseconds / 1000;
+    final seg = _segs.where((x) => x.contains(p)).firstOrNull;
+    if (seg != null && lib.autoSkipIntro && seg.type != 'preview' && _skipped.add('${seg.type}${seg.start}')) {
+      _doSkip(seg);
     }
     if (v.isInitialized && !_ended && v.duration > Duration.zero && v.position >= v.duration - const Duration(milliseconds: 500)) {
       _ended = true;
@@ -218,7 +225,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _saveProgress();
     _nextTimer?.cancel();
     _nextCountdown = null;
-    _manualIntro = false;
     setState(() => _index = i);
     _loadEpisode();
   }
@@ -536,60 +542,81 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
+  void _ensureSegs(VideoPlayerValue v) {
+    if (!v.isInitialized || v.duration == Duration.zero || _segFor == _index || _stream == null) return;
+    final idx = _index;
+    _segFor = idx;
+    final len = v.duration.inMilliseconds / 1000;
+    final base = <SkipSegment>[
+      if (_stream!.intro != null && _stream!.intro!.end > _stream!.intro!.start)
+        SkipSegment('intro', _stream!.intro!.start.toDouble(), _stream!.intro!.end.toDouble()),
+      if (_stream!.outro != null && _stream!.outro!.end > _stream!.outro!.start)
+        SkipSegment('outro', _stream!.outro!.start.toDouble(), _stream!.outro!.end.toDouble()),
+    ];
+    _segs = base;
+    SkipTimes.instance
+        .find(
+          showKey: widget.anime.key,
+          title: widget.anime.title,
+          episode: _ep.number,
+          length: len,
+          mal: widget.anime.malId,
+        )
+        .then((found) {
+      if (!mounted || _index != idx) return;
+      // Server data wins for intro/outro; add recap/preview and fill gaps.
+      final merged = [...base];
+      for (final f in found) {
+        if (!merged.any((m) => m.type == f.type)) merged.add(f);
+      }
+      merged.sort((a, b) => a.start.compareTo(b.start));
+      setState(() => _segs = merged);
+    });
+  }
+
+  void _doSkip(SkipSegment seg) {
+    final c = _vc;
+    if (c == null) return;
+    final dur = c.value.duration.inMilliseconds / 1000;
+    if ((seg.type == 'outro' || seg.type == 'preview') && seg.end >= dur - 2 && _hasNext && lib.autoPlayNext) {
+      _goTo(_index + 1);
+    } else {
+      c.seekTo(Duration(milliseconds: (seg.end * 1000).round()));
+    }
+  }
+
   List<Widget> _skipButtons(VideoPlayerController c) {
     final pos = c.value.position.inSeconds;
-    final intro = _stream?.intro;
-    final outro = _stream?.outro;
-    final inIntro = intro != null && pos >= intro.start && pos < intro.end - 1;
-    final inOutro = outro != null && pos >= outro.start && pos < outro.end - 1;
-    if (!inIntro && !inOutro) {
-      final dur = c.value.duration.inSeconds;
-      if (intro == null && !_manualIntro && pos >= 3 && pos < 180 && dur > 600) {
-        return [
-          Positioned(
-            right: 24,
-            bottom: 90,
-            child: FilledButton.icon(
-              style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black),
-              onPressed: () {
-                setState(() => _manualIntro = true);
-                c.seekTo(c.value.position + const Duration(seconds: 85));
-              },
-              icon: const Icon(Icons.fast_forward_rounded),
-              label: const Text('Skip Intro'),
-            ),
+    final dur = c.value.duration.inSeconds;
+    final p = c.value.position.inMilliseconds / 1000;
+    final seg = _segs.where((x) => x.contains(p)).firstOrNull;
+    if (seg != null) {
+      return [
+        Positioned(
+          right: 24,
+          bottom: 90,
+          child: FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black),
+            onPressed: () {
+              _skipped.add('${seg.type}${seg.start}');
+              _doSkip(seg);
+            },
+            icon: const Icon(Icons.fast_forward_rounded),
+            label: Text(seg.label),
           ),
-        ];
-      }
-      if (_hasNext && _nextCountdown == null && dur > 300 && dur - pos <= 100 && dur - pos > 1) {
-        return [
-          Positioned(
-            right: 24,
-            bottom: 90,
-            child: NextEpisodePill(accent: AppColors.primary, onTap: () => _goTo(_index + 1)),
-          ),
-        ];
-      }
-      return [];
-    }
-    return [
-      Positioned(
-        right: 24,
-        bottom: 90,
-        child: FilledButton.icon(
-          style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black),
-          onPressed: () {
-            if (inOutro && _hasNext && lib.autoPlayNext) {
-              _goTo(_index + 1);
-            } else {
-              c.seekTo(Duration(seconds: inIntro ? intro.end : outro!.end));
-            }
-          },
-          icon: const Icon(Icons.fast_forward_rounded),
-          label: Text(inIntro ? 'Skip Intro' : 'Skip Outro'),
         ),
-      ),
-    ];
+      ];
+    }
+    if (_hasNext && _nextCountdown == null && dur > 300 && dur - pos <= 100 && dur - pos > 1) {
+      return [
+        Positioned(
+          right: 24,
+          bottom: 90,
+          child: NextEpisodePill(accent: AppColors.primary, onTap: () => _goTo(_index + 1)),
+        ),
+      ];
+    }
+    return [];
   }
 
   Widget _nextCard() => Positioned(

@@ -8,6 +8,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../core/theme.dart';
 import '../data/hindi_api.dart';
 import '../data/library.dart';
+import '../data/skip_times.dart';
 import '../widgets/player_extras.dart';
 import '../widgets/common.dart';
 
@@ -721,7 +722,9 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
   Timer? _cd;
   bool _introSkipped = false;
   bool _skipNextDismissed = false;
-  static const _introLen = 85;
+  List<SkipSegment> _segs = [];
+  int _segFor = -1;
+  final _skipped = <String>{};
   Timer? _hide;
   Timer? _save;
 
@@ -894,6 +897,9 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
     _countdown = null;
     _introSkipped = false;
     _skipNextDismissed = false;
+    _segs = [];
+    _segFor = -1;
+    _skipped.clear();
     _vc?.removeListener(_tick);
     _vc?.pause();
     _ended = false;
@@ -1173,20 +1179,50 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
     final pos = c.value.position.inSeconds;
     final dur = c.value.duration.inSeconds;
     final out = <Widget>[];
-    if (!_introSkipped && pos >= 3 && pos < 180 && dur > 600) {
-      out.add(Positioned(
-        right: 24,
-        bottom: _ui ? 96 : 40,
-        child: FilledButton.icon(
-          style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black),
-          onPressed: () {
-            setState(() => _introSkipped = true);
-            c.seekTo(c.value.position + const Duration(seconds: _introLen));
-          },
-          icon: const Icon(Icons.fast_forward_rounded),
-          label: const Text('Skip Intro'),
-        ),
-      ));
+    if (dur > 0 && _segFor != _i) {
+      final idx = _i;
+      _segFor = idx;
+      SkipTimes.instance
+          .find(
+            showKey: '${widget.anime.link}#${_ep.season}',
+            title: widget.anime.title,
+            episode: _ep.number,
+            season: _ep.season,
+            length: c.value.duration.inMilliseconds / 1000,
+          )
+          .then((v) {
+        if (mounted && _i == idx) setState(() => _segs = v);
+      });
+    }
+    final p = c.value.position.inMilliseconds / 1000;
+    final seg = _segs.where((x) => x.contains(p)).firstOrNull;
+    if (seg != null) {
+      final id = '${seg.type}${seg.start}';
+      final hasNextEp = _i < widget.episodes.length - 1;
+      void doSkip() {
+        _skipped.add(id);
+        if ((seg.type == 'outro' || seg.type == 'preview') && seg.end >= dur - 2 && hasNextEp && Library.instance.autoPlayNext) {
+          _goto(_i + 1);
+        } else {
+          c.seekTo(Duration(milliseconds: (seg.end * 1000).round()));
+        }
+      }
+      if (Library.instance.autoSkipIntro && !_skipped.contains(id) && seg.type != 'preview') {
+        _skipped.add(id);
+        Future.microtask(doSkip);
+      } else {
+        out.add(Positioned(
+          right: 24,
+          bottom: _ui ? 96 : 40,
+          child: FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black),
+            onPressed: () => setState(doSkip),
+            icon: const Icon(Icons.fast_forward_rounded),
+            label: Text(seg.label),
+          ),
+        ));
+        return out;
+      }
     }
     final hasNext = _i < widget.episodes.length - 1;
     if (hasNext && !_skipNextDismissed && _countdown == null && dur > 300 && dur - pos <= 100 && dur - pos > 1) {

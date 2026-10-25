@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../core/vault.dart';
 import 'models.dart';
 
 /// Jikan (MyAnimeList) public API for accurate listings, categories and genres.
@@ -9,7 +10,7 @@ class JikanApi {
   JikanApi._();
   static final JikanApi instance = JikanApi._();
 
-  static const _base = 'https://api.jikan.moe/v4/';
+  static String get _base => Vault.jikan;
   final _cache = <String, dynamic>{};
   DateTime _last = DateTime.fromMillisecondsSinceEpoch(0);
   Future<void> _queue = Future.value();

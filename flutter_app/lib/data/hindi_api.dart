@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/vault.dart';
+
 /// App-wide switch between the default catalog and Hindi mode.
 class ModeController extends ValueNotifier<bool> {
   ModeController._() : super(false);
@@ -93,9 +95,9 @@ class HindiApi {
   HindiApi._();
   static final instance = HindiApi._();
 
-  static const base = 'https://hindianime-apu-forapp.vercel.app';
-  static const site = 'https://myanimes.in/';
-  static const _key = '@BaignX';
+  static String get base => Vault.hindiBase;
+  static String get site => Vault.hindiSite;
+  static String get _key => Vault.hindiKey;
   static const _ua =
       'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36';
 
@@ -150,7 +152,7 @@ class HindiApi {
           if (r.statusCode == 200) html = utf8.decode(r.bodyBytes, allowMalformed: true);
         } catch (_) {}
       }
-      if (html.isEmpty) throw Exception('Could not reach myanimes.in');
+      if (html.isEmpty) throw Exception('Could not reach the Hindi library');
       final sections = parseHome(html);
       if (sections.isEmpty) throw Exception('Nothing found');
       _home = sections;
@@ -183,7 +185,7 @@ class HindiApi {
       final items = <HindiAnime>[];
       final seen = <String>{};
       for (final art in chunk.split('<article').skip(1)) {
-        final a = RegExp(r'href="(https://myanimes\.in/[^"]+)"').firstMatch(art);
+        final a = RegExp('href="(${RegExp.escape(site)}[^"]+)"').firstMatch(art);
         if (a == null) continue;
         final link = a.group(1)!;
         if (!seen.add(link)) continue;

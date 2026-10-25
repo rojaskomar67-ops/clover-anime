@@ -36,15 +36,22 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
             ~/.pub-cache
+            flutter_app/build
+            flutter_app/.dart_tool
+            flutter_app/android/.gradle
           key: clover-build-${{ hashFiles('flutter_app/pubspec.yaml') }}
           restore-keys: clover-build-
 
-      - name: Generate Android project
+      - name: Generate Android project (only first time)
+        id: gen
         run: |
+          if [ -d android ]; then echo "fresh=false" >> $GITHUB_OUTPUT; exit 0; fi
+          echo "fresh=true" >> $GITHUB_OUTPUT
           flutter create --platforms=android --org com.clovranime --project-name clover_anime .
           rm -rf test
 
       - name: Configure Android app
+        if: steps.gen.outputs.fresh == 'true'
         run: |
           M=android/app/src/main/AndroidManifest.xml
           sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <application android:usesCleartextTraffic="true"|' $M
@@ -72,7 +79,14 @@ jobs:
 
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings
-      - run: flutter build apk --release
+      - run: flutter build apk --release --obfuscate --split-debug-info=build/symbols
+
+      - name: Save generated Android project and lock file to GitHub
+        run: |
+          git config user.name "clover-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add -f android pubspec.lock
+          git diff --cached --quiet || (git commit -m "Save build files [skip ci]" && git push)
 
       - uses: actions/upload-artifact@v4
         with:
