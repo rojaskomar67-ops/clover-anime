@@ -10,6 +10,8 @@ import '../core/theme.dart';
 import '../data/clover_api.dart';
 import '../data/library.dart';
 import '../data/models.dart';
+import '../widgets/common.dart' show toast;
+import '../widgets/player_extras.dart';
 
 class PlayerScreen extends StatefulWidget {
   final AnimeRef anime;
@@ -44,6 +46,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Timer? _nextTimer;
   bool _introSkipped = false;
   bool _ended = false;
+  final _hold = HoldSpeed();
+  final _sleep = SleepTimer();
+  bool _manualIntro = false;
 
   Episode get _ep => widget.episodes[_index];
   bool get _hasNext => _index < widget.episodes.length - 1;
@@ -65,6 +70,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _saveTimer?.cancel();
     _flashTimer?.cancel();
     _nextTimer?.cancel();
+    _sleep.cancel();
     _vc?.removeListener(_onTick);
     _vc?.dispose();
     WakelockPlus.disable();
@@ -176,7 +182,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (v.isInitialized && !_ended && v.duration > Duration.zero && v.position >= v.duration - const Duration(milliseconds: 500)) {
       _ended = true;
       _saveProgress();
-      if (lib.autoPlayNext && _hasNext) _startNextCountdown();
+      if (_sleep.endOfEpisode) {
+        _sleep.cancel();
+        c.pause();
+      } else if (lib.autoPlayNext && _hasNext) {
+        _startNextCountdown();
+      }
     }
     setState(() {});
   }
@@ -196,6 +207,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _goTo(int i) {
     if (i < 0 || i >= widget.episodes.length) return;
     _saveProgress();
+    _nextTimer?.cancel();
+    _nextCountdown = null;
+    _manualIntro = false;
     setState(() => _index = i);
     _loadEpisode();
   }
@@ -277,6 +291,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: _toggleControls,
+              onLongPressStart: _locked ? null : (_) => setState(() => _hold.start(_vc)),
+              onLongPressEnd: (_) => setState(() => _hold.end(_vc)),
               onDoubleTap: _locked ? null : () => _seekBy(-10),
             ),
           ),
@@ -284,6 +300,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: _toggleControls,
+              onLongPressStart: _locked ? null : (_) => setState(() => _hold.start(_vc)),
+              onLongPressEnd: (_) => setState(() => _hold.end(_vc)),
               onDoubleTap: _locked || c == null
                   ? null
                   : () => c.value.isPlaying ? c.pause() : c.play(),
@@ -293,6 +311,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: _toggleControls,
+              onLongPressStart: _locked ? null : (_) => setState(() => _hold.start(_vc)),
+              onLongPressEnd: (_) => setState(() => _hold.end(_vc)),
               onDoubleTap: _locked ? null : () => _seekBy(10),
             ),
           ),
@@ -325,6 +345,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             child: _locked ? _lockedOverlay() : _controls(ready ? c : null),
           ),
         ),
+        HoldSpeedBadge(visible: _hold.active),
         if (ready) ..._skipButtons(c),
         if (_nextCountdown != null && _nextCountdown! > 0) _nextCard(),
       ]),
@@ -497,7 +518,36 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final outro = _stream?.outro;
     final inIntro = intro != null && pos >= intro.start && pos < intro.end - 1;
     final inOutro = outro != null && pos >= outro.start && pos < outro.end - 1;
-    if (!inIntro && !inOutro) return [];
+    if (!inIntro && !inOutro) {
+      final dur = c.value.duration.inSeconds;
+      if (intro == null && !_manualIntro && pos >= 3 && pos < 180 && dur > 600) {
+        return [
+          Positioned(
+            right: 24,
+            bottom: 90,
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black),
+              onPressed: () {
+                setState(() => _manualIntro = true);
+                c.seekTo(c.value.position + const Duration(seconds: 85));
+              },
+              icon: const Icon(Icons.fast_forward_rounded),
+              label: const Text('Skip Intro'),
+            ),
+          ),
+        ];
+      }
+      if (_hasNext && _nextCountdown == null && dur > 300 && dur - pos <= 100 && dur - pos > 1) {
+        return [
+          Positioned(
+            right: 24,
+            bottom: 90,
+            child: NextEpisodePill(accent: AppColors.primary, onTap: () => _goTo(_index + 1)),
+          ),
+        ];
+      }
+      return [];
+    }
     return [
       Positioned(
         right: 24,
@@ -697,6 +747,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
               title: const Text('Prefer dubbed audio'),
               value: lib.preferredType == 'dub',
               onChanged: (v) => lib.setPrefType(v ? 'dub' : 'sub'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.bedtime_rounded, color: AppColors.primary),
+              title: const Text('Sleep timer'),
+              trailing: Text(_sleep.label, style: const TextStyle(color: AppColors.textDim)),
+              onTap: () async {
+                Navigator.pop(ctx);
+                final m = await pickSleep(context, _sleep, AppColors.primary);
+                if (m == null || !mounted) return;
+                setState(() => _sleep.set(m == 0 ? null : m, () {
+                      _vc?.pause();
+                      if (mounted) setState(() {});
+                    }));
+                toast(context, m == 0 ? 'Sleep timer off' : 'Sleep timer: ${_sleep.label}');
+              },
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Text('Tip: hold anywhere on the video for 2x speed, double-tap sides to skip 10s.',
+                  style: TextStyle(color: AppColors.textDim, fontSize: 12)),
             ),
           ]),
         ),

@@ -7,6 +7,8 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../core/theme.dart';
 import '../data/hindi_api.dart';
+import '../data/library.dart';
+import '../widgets/player_extras.dart';
 import '../widgets/common.dart';
 
 const hindiAccent = Color(0xFFFF9933); // saffron
@@ -605,6 +607,13 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
   HlsMaster? _master;
   String _lang = 'hi';
   int? _quality; // null = auto
+  final _hold = HoldSpeed();
+  final _sleep = SleepTimer();
+  int? _countdown;
+  Timer? _cd;
+  bool _introSkipped = false;
+  bool _skipNextDismissed = false;
+  static const _introLen = 85;
   Timer? _hide;
   Timer? _save;
 
@@ -627,6 +636,8 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
   void dispose() {
     _hide?.cancel();
     _save?.cancel();
+    _cd?.cancel();
+    _sleep.cancel();
     final v = _vc?.value;
     if (v != null && v.isInitialized) HindiApi.instance.savePosition(_ep.link, v.position.inSeconds);
     _vc?.dispose();
@@ -714,13 +725,35 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
     if (v.isInitialized && v.duration > Duration.zero && v.position >= v.duration - const Duration(milliseconds: 500)) {
       if (!_ended) {
         _ended = true;
-        if (_i < widget.episodes.length - 1) _goto(_i + 1);
+        if (_sleep.endOfEpisode) {
+          _sleep.cancel();
+          _vc?.pause();
+        } else if (Library.instance.autoPlayNext && _i < widget.episodes.length - 1) {
+          _startCountdown();
+        }
       }
     }
     setState(() {});
   }
 
+  void _startCountdown() {
+    _cd?.cancel();
+    setState(() => _countdown = 6);
+    _cd = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) return t.cancel();
+      setState(() => _countdown = _countdown! - 1);
+      if (_countdown! <= 0) {
+        t.cancel();
+        _goto(_i + 1);
+      }
+    });
+  }
+
   void _goto(int i) {
+    _cd?.cancel();
+    _countdown = null;
+    _introSkipped = false;
+    _skipNextDismissed = false;
     _vc?.removeListener(_tick);
     _vc?.pause();
     _ended = false;
@@ -823,6 +856,31 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
               ]),
             ],
             const SizedBox(height: 16),
+            const SizedBox(height: 8),
+            StatefulBuilder(
+              builder: (_, set) => Column(children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  activeTrackColor: hindiAccent,
+                  title: const Text('Auto-play next episode'),
+                  value: Library.instance.autoPlayNext,
+                  onChanged: (v) {
+                    Library.instance.setAutoNext(v);
+                    set(() {});
+                  },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.bedtime_rounded, color: hindiAccent),
+                  title: const Text('Sleep timer'),
+                  trailing: Text(_sleep.label, style: const TextStyle(color: AppColors.textDim)),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _sleepPick();
+                  },
+                ),
+              ]),
+            ),
             const Text('Speed', style: TextStyle(fontWeight: FontWeight.w800)),
             const SizedBox(height: 8),
             Wrap(spacing: 8, children: [
@@ -882,6 +940,8 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
           setState(() => _ui = !_ui);
           if (_ui) _autoHide();
         },
+        onLongPressStart: _locked ? null : (_) => setState(() => _hold.start(_vc)),
+        onLongPressEnd: (_) => setState(() => _hold.end(_vc)),
         onDoubleTapDown: _locked
             ? null
             : (d) => _seek(d.globalPosition.dx < MediaQuery.of(context).size.width / 2 ? -10 : 10),
@@ -915,6 +975,23 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
                 ]),
               ]),
             ),
+          HoldSpeedBadge(visible: _hold.active),
+          if (ready && !_locked) ..._overlayButtons(c),
+          if (_countdown != null && _countdown! > 0)
+            Positioned(
+              right: 24,
+              bottom: 90,
+              child: UpNextCard(
+                seconds: _countdown!,
+                title: widget.episodes[_i + 1].label,
+                accent: hindiAccent,
+                onPlay: () => _goto(_i + 1),
+                onCancel: () {
+                  _cd?.cancel();
+                  setState(() => _countdown = null);
+                },
+              ),
+            ),
           AnimatedOpacity(
             opacity: _ui ? 1 : 0,
             duration: const Duration(milliseconds: 250),
@@ -926,6 +1003,82 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
         ]),
       ),
     );
+  }
+
+  List<Widget> _overlayButtons(VideoPlayerController c) {
+    final pos = c.value.position.inSeconds;
+    final dur = c.value.duration.inSeconds;
+    final out = <Widget>[];
+    if (!_introSkipped && pos >= 3 && pos < 180 && dur > 600) {
+      out.add(Positioned(
+        right: 24,
+        bottom: _ui ? 96 : 40,
+        child: FilledButton.icon(
+          style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black),
+          onPressed: () {
+            setState(() => _introSkipped = true);
+            c.seekTo(c.value.position + const Duration(seconds: _introLen));
+          },
+          icon: const Icon(Icons.fast_forward_rounded),
+          label: const Text('Skip Intro'),
+        ),
+      ));
+    }
+    final hasNext = _i < widget.episodes.length - 1;
+    if (hasNext && !_skipNextDismissed && _countdown == null && dur > 300 && dur - pos <= 100 && dur - pos > 1) {
+      out.add(Positioned(
+        right: 24,
+        bottom: _ui ? 96 : 40,
+        child: NextEpisodePill(accent: hindiAccent, onTap: () => _goto(_i + 1)),
+      ));
+    }
+    return out;
+  }
+
+  void _episodes() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surface,
+      constraints: const BoxConstraints(maxWidth: 560),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      builder: (ctx) => SizedBox(
+        height: MediaQuery.of(ctx).size.height * 0.85,
+        child: Column(children: [
+          const Padding(
+            padding: EdgeInsets.all(14),
+            child: Text('Episodes', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+          ),
+          Expanded(
+            child: ListView.builder(
+              controller: ScrollController(initialScrollOffset: (_i * 56.0 - 100).clamp(0, double.infinity)),
+              itemCount: widget.episodes.length,
+              itemExtent: 56,
+              itemBuilder: (_, i) => ListTile(
+                selected: i == _i,
+                selectedColor: hindiAccent,
+                leading: Icon(i == _i ? Icons.equalizer_rounded : Icons.play_circle_outline_rounded),
+                title: Text(widget.episodes[i].label),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  if (i != _i) _goto(i);
+                },
+              ),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _sleepPick() async {
+    final m = await pickSleep(context, _sleep, hindiAccent);
+    if (m == null || !mounted) return;
+    setState(() => _sleep.set(m == 0 ? null : m, () {
+          _vc?.pause();
+          if (mounted) setState(() {});
+        }));
+    toast(context, m == 0 ? 'Sleep timer off' : 'Sleep timer: ${_sleep.label}');
   }
 
   Widget _lockedUi() => SafeArea(
@@ -970,6 +1123,7 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
                       style: const TextStyle(color: AppColors.textDim, fontSize: 12)),
                 ]),
               ),
+              IconButton(icon: const Icon(Icons.playlist_play_rounded), onPressed: _episodes),
               IconButton(icon: const Icon(Icons.translate_rounded), onPressed: _sheet),
               IconButton(icon: const Icon(Icons.lock_open_rounded), onPressed: () => setState(() => _locked = true)),
               IconButton(icon: const Icon(Icons.tune_rounded), onPressed: _sheet),
