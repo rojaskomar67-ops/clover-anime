@@ -558,7 +558,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         .find(
           showKey: widget.anime.key,
           title: widget.anime.title,
-          episode: _ep.number,
+          episode: int.tryParse(_ep.number.toString()) ?? _index + 1,
           length: len,
           mal: widget.anime.malId,
         )
