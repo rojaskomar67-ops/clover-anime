@@ -1,7 +1,7 @@
 name: clover_anime
 description: Clover Anime - premium anime streaming app.
 publish_to: "none"
-version: 3.1.0+10
+version: 3.2.0+11
 
 environment:
   sdk: ">=3.4.0 <4.0.0"

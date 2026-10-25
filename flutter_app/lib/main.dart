@@ -9,7 +9,9 @@ import 'core/theme.dart';
 import 'data/auth_service.dart';
 import 'data/library.dart';
 import 'data/notifications.dart';
+import 'data/hindi_api.dart';
 import 'screens/discover_screen.dart';
+import 'screens/hindi_screens.dart';
 import 'screens/home_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/search_screen.dart';
@@ -31,6 +33,7 @@ Future<void> main() async {
     systemNavigationBarColor: AppColors.bg,
   ));
   await Library.instance.init();
+  await ModeController.instance.init();
   await Notifier.instance.init();
   try {
     await Firebase.initializeApp(options: firebaseOptions);
@@ -109,7 +112,8 @@ class RootShell extends StatefulWidget {
 class _RootShellState extends State<RootShell> {
   int _index = 0;
   bool _updateShown = false;
-  final _pages = const [HomeScreen(), DiscoverScreen(), SearchScreen(), WatchlistScreen(), ProfileScreen()];
+  static const _defaultPages = [HomeScreen(), DiscoverScreen(), SearchScreen(), WatchlistScreen(), ProfileScreen()];
+  static const _hindiPages = [HindiHomeScreen(), DiscoverScreen(), HindiSearchScreen(), WatchlistScreen(), ProfileScreen()];
 
   @override
   void initState() {
@@ -197,8 +201,9 @@ class _RootShellState extends State<RootShell> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: AuthService.instance,
+      listenable: Listenable.merge([AuthService.instance, ModeController.instance]),
       builder: (context, _) {
+        final hindi = ModeController.instance.value;
         final auth = AuthService.instance;
         if (auth.features.maintenance && !auth.isAdmin) {
           return Scaffold(
@@ -218,7 +223,25 @@ class _RootShellState extends State<RootShell> {
           );
         }
         final wide = MediaQuery.of(context).size.width >= 720;
-        final body = IndexedStack(index: _index, children: _pages);
+        final pages = hindi ? _hindiPages : _defaultPages;
+        final body = Stack(children: [
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 450),
+            switchInCurve: Curves.easeOutCubic,
+            transitionBuilder: (child, a) => FadeTransition(
+              opacity: a,
+              child: ScaleTransition(scale: Tween(begin: 0.97, end: 1.0).animate(a), child: child),
+            ),
+            child: IndexedStack(key: ValueKey(hindi), index: _index, children: pages),
+          ),
+          if (_index == 0 || _index == 2)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              left: 0,
+              right: 0,
+              child: const Center(child: ModeSwitch()),
+            ),
+        ]);
         if (wide) {
           return Scaffold(
             body: Row(children: [
