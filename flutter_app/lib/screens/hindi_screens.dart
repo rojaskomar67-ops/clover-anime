@@ -918,7 +918,7 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
                 onPressed: !ready
                     ? null
                     : () {
-                        c.value.isPlaying ? c.pause() : c.play();
+                        c!.value.isPlaying ? c.pause() : c.play();
                         _autoHide();
                       },
               ),
@@ -946,7 +946,7 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
                   child: Slider(
                     value: pos.inMilliseconds.toDouble().clamp(0, max).toDouble(),
                     max: max,
-                    onChanged: ready ? (v) => c.seekTo(Duration(milliseconds: v.toInt())) : null,
+                    onChanged: ready ? (v) => c!.seekTo(Duration(milliseconds: v.toInt())) : null,
                   ),
                 ),
               ),
