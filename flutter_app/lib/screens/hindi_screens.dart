@@ -429,16 +429,19 @@ class _HindiDetailScreenState extends State<HindiDetailScreen> {
   bool _saved = false;
   Map<String, dynamic>? _last;
   Set<int> _done = {};
+  Map<String, double> _prog = {};
   bool _seasonSet = false;
 
   Future<void> _refreshProgress() async {
     final d = await _f;
     final l = await HindiApi.instance.last(widget.anime);
     final w = await HindiApi.instance.watched(widget.anime, d.episodes.length);
+    final pr = await HindiApi.instance.progress(d.episodes);
     if (!mounted) return;
     setState(() {
       _last = l;
       _done = w;
+      _prog = pr;
       if (!_seasonSet && l != null) {
         final i = (l['i'] as num).toInt();
         if (i < d.episodes.length) {
@@ -605,44 +608,79 @@ class _HindiDetailScreenState extends State<HindiDetailScreen> {
                 ),
               if (!a.isMovie)
                 SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
-                  sliver: SliverGrid(
-                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                      maxCrossAxisExtent: 110,
-                      mainAxisExtent: 54,
-                      crossAxisSpacing: 8,
-                      mainAxisSpacing: 8,
-                    ),
-                    delegate: SliverChildBuilderDelegate(
-                      (_, j) {
-                        final i = shown[j];
-                        return Pressable(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 40),
+                  sliver: SliverList.builder(
+                    itemCount: shown.length,
+                    itemBuilder: (_, j) {
+                      final i = shown[j];
+                      final e = eps[i];
+                      final cur = _last != null && (_last!['i'] as num).toInt() == i;
+                      final done = _done.contains(i);
+                      final pr = _prog[e.link];
+                      return FadeIn(
+                        delay: Duration(milliseconds: 25 * (j % 12)),
+                        child: Pressable(
                           onTap: () => _play(eps, i),
                           child: Container(
-                            alignment: Alignment.center,
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
-                              color: AppColors.surface,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: AppColors.border),
+                              color: cur ? hindiAccent.withValues(alpha: 0.10) : AppColors.surface,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: cur ? hindiAccent.withValues(alpha: 0.6) : AppColors.border),
                             ),
-                            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                              if (_done.contains(i))
-                                const Padding(
-                                  padding: EdgeInsets.only(right: 4),
-                                  child: Icon(Icons.check_circle_rounded, size: 14, color: hindiAccent),
+                            child: Row(children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: SizedBox(
+                                  width: 128,
+                                  height: 72,
+                                  child: Stack(fit: StackFit.expand, children: [
+                                    NetImage(d?.poster ?? a.poster),
+                                    Container(color: Colors.black38),
+                                    Center(
+                                      child: Icon(done ? Icons.check_circle_rounded : Icons.play_circle_fill_rounded,
+                                          color: done ? hindiAccent : Colors.white, size: 30),
+                                    ),
+                                    Positioned(
+                                      left: 6,
+                                      top: 6,
+                                      child: Badge2('S${e.season} E${e.number}', color: hindiAccent),
+                                    ),
+                                    if (pr != null && !done)
+                                      Positioned(
+                                        left: 0,
+                                        right: 0,
+                                        bottom: 0,
+                                        child: LinearProgressIndicator(
+                                            value: pr, minHeight: 3, color: hindiAccent, backgroundColor: Colors.white24),
+                                      ),
+                                  ]),
                                 ),
-                              Text('EP ${eps[i].number}',
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.w800,
-                                      color: _last != null && (_last!['i'] as num).toInt() == i
-                                          ? hindiAccent
-                                          : null)),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                  Text('Episode ${e.number}',
+                                      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                                  const SizedBox(height: 3),
+                                  Text(e.title, maxLines: 2, overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(color: AppColors.textDim, fontSize: 12)),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    done ? 'Watched' : (cur ? 'Continue watching' : (pr != null ? 'In progress' : 'Hindi')),
+                                    style: TextStyle(
+                                        color: done || cur ? hindiAccent : AppColors.textDim,
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w700),
+                                  ),
+                                ]),
+                              ),
                             ]),
                           ),
-                        );
-                      },
-                      childCount: shown.length,
-                    ),
+                        ),
+                      );
+                    },
                   ),
                 ),
             ],
@@ -818,7 +856,7 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
     if (v == null || !v.isInitialized || v.duration == Duration.zero) return;
     final pos = v.position.inSeconds, dur = v.duration.inSeconds;
     // Finished episodes restart from the beginning next time.
-    HindiApi.instance.savePosition(_ep.link, dur - pos < 30 ? 0 : pos);
+    HindiApi.instance.savePosition(_ep.link, dur - pos < 30 ? 0 : pos, dur);
     HindiApi.instance.saveLast(widget.anime, _i, _ep.label, pos, dur);
   }
 

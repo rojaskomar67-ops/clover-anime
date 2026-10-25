@@ -23,7 +23,7 @@ class _DetailScreenState extends State<DetailScreen> {
   Future<List<AnimeRef>>? _recs;
   String? _error;
   bool _loading = true;
-  bool _expanded = false;
+  bool _expanded = true;
   int _range = 0;
   bool _desc = false;
 
@@ -402,8 +402,8 @@ class _DetailScreenState extends State<DetailScreen> {
       leading: ClipRRect(
         borderRadius: BorderRadius.circular(10),
         child: SizedBox(
-          width: 96,
-          height: 56,
+          width: 120,
+          height: 68,
           child: Stack(fit: StackFit.expand, children: [
             NetImage(_d?.banner ?? _d?.poster ?? widget.anime.poster),
             Container(color: Colors.black45),
@@ -412,13 +412,23 @@ class _DetailScreenState extends State<DetailScreen> {
           ]),
         ),
       ),
-      title: Text('Episode ${e.number}', style: const TextStyle(fontWeight: FontWeight.w700)),
-      subtitle: Text(
-        e.filler ? 'Filler • ${e.title}' : e.title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(color: e.filler ? AppColors.accent : AppColors.textDim, fontSize: 12),
-      ),
+      title: Text('E${e.number}${e.title.isNotEmpty && !e.title.startsWith('Episode') ? ' · ${e.title}' : ''}',
+          maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+      subtitle: Builder(builder: (_) {
+        final h = Library.instance.history.where((x) => x.episodeId == e.id).firstOrNull;
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const SizedBox(height: 3),
+          Text(
+            e.filler ? 'Filler' : (watched ? 'Watched' : (h != null ? 'Continue · ${(h.positionMs ~/ 60000)} min in' : 'Episode ${e.number}')),
+            style: TextStyle(color: e.filler ? AppColors.accent : (h != null ? AppColors.primary : AppColors.textDim), fontSize: 12),
+          ),
+          if (h != null && !watched) ...[
+            const SizedBox(height: 5),
+            LinearProgressIndicator(value: h.progress, minHeight: 3, color: AppColors.primary,
+                backgroundColor: Colors.white12, borderRadius: BorderRadius.circular(3)),
+          ],
+        ]);
+      }),
     );
   }
 }

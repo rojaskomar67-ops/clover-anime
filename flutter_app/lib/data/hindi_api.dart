@@ -302,8 +302,22 @@ class HindiApi {
 
   Future<int> position(String link) async =>
       (await SharedPreferences.getInstance()).getInt('hpos:$link') ?? 0;
-  Future<void> savePosition(String link, int s) async =>
-      (await SharedPreferences.getInstance()).setInt('hpos:$link', s);
+  Future<void> savePosition(String link, int s, [int dur = 0]) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt('hpos:$link', s);
+    if (dur > 0) await p.setInt('hdur:$link', dur);
+  }
+
+  /// Progress 0..1 per episode link.
+  Future<Map<String, double>> progress(List<HindiEpisode> eps) async {
+    final p = await SharedPreferences.getInstance();
+    final m = <String, double>{};
+    for (final e in eps) {
+      final pos = p.getInt('hpos:${e.link}') ?? 0, dur = p.getInt('hdur:${e.link}') ?? 0;
+      if (pos > 0 && dur > 0) m[e.link] = (pos / dur).clamp(0, 1).toDouble();
+    }
+    return m;
+  }
 }
 
 // ---------------- HLS audio-language & quality control ----------------
