@@ -602,6 +602,9 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
   bool _locked = false;
   double _speed = 1;
   BoxFit _fit = BoxFit.contain;
+  HlsMaster? _master;
+  String _lang = 'hi';
+  int? _quality; // null = auto
   Timer? _hide;
   Timer? _save;
 
@@ -639,6 +642,7 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
       _error = null;
     });
     try {
+      _lang = await HindiApi.instance.audioLang();
       _streams = await HindiApi.instance.streams(_ep.link);
       if (_streams.isEmpty) throw Exception('No streams');
       for (var k = 0; k < _streams.length; k++) {
@@ -655,15 +659,26 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
     }
   }
 
-  Future<bool> _open(int k) async {
+  Future<bool> _open(int k, {bool keep = false}) async {
     final s = _streams[k];
-    final resume = _vc?.value.isInitialized == true && k != _server ? _vc!.value.position : null;
+    final resume =
+        _vc?.value.isInitialized == true && (keep || k != _server) ? _vc!.value.position : null;
     setState(() {
       _loading = true;
+      if (k != _server || _master == null) _quality = null;
       _server = k;
     });
+    var url = s.url;
+    final m = keep && _master != null ? _master : await HindiApi.instance.master(s);
+    _master = m;
+    if (m != null) {
+      if (m.audios.isNotEmpty && !m.audios.any((a) => a.lang == _lang)) {
+        _lang = m.audios.any((a) => a.lang == 'hi') ? 'hi' : m.audios.first.lang;
+      }
+      url = await LocalHls.instance.serve(m.build(lang: _lang, variant: _quality));
+    }
     final c = VideoPlayerController.networkUrl(
-      Uri.parse(s.url),
+      Uri.parse(url),
       formatHint: VideoFormat.hls,
       httpHeaders: {if (s.referer != null) 'Referer': s.referer!},
     );
@@ -759,6 +774,54 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
                   },
                 ),
             ]),
+            if ((_master?.audios.length ?? 0) > 0) ...[
+              const SizedBox(height: 16),
+              const Text('Audio language', style: TextStyle(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 8),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                for (final a in _master!.audios)
+                  ChoiceChip(
+                    avatar: a.lang == 'hi' ? const Icon(Icons.star_rounded, size: 16) : null,
+                    label: Text(_langName(a)),
+                    selected: a.lang == _lang,
+                    selectedColor: hindiAccent,
+                    onSelected: (_) async {
+                      Navigator.pop(ctx);
+                      setState(() => _lang = a.lang);
+                      await HindiApi.instance.setAudioLang(a.lang);
+                      await _open(_server, keep: true);
+                    },
+                  ),
+              ]),
+            ],
+            if ((_master?.variants.length ?? 0) > 0) ...[
+              const SizedBox(height: 16),
+              const Text('Quality', style: TextStyle(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 8),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                ChoiceChip(
+                  label: const Text('Auto'),
+                  selected: _quality == null,
+                  selectedColor: hindiAccent,
+                  onSelected: (_) async {
+                    Navigator.pop(ctx);
+                    setState(() => _quality = null);
+                    await _open(_server, keep: true);
+                  },
+                ),
+                for (var q = 0; q < _master!.variants.length; q++)
+                  ChoiceChip(
+                    label: Text(_master!.variants[q].label),
+                    selected: _quality == q,
+                    selectedColor: hindiAccent,
+                    onSelected: (_) async {
+                      Navigator.pop(ctx);
+                      setState(() => _quality = q);
+                      await _open(_server, keep: true);
+                    },
+                  ),
+              ]),
+            ],
             const SizedBox(height: 16),
             const Text('Speed', style: TextStyle(fontWeight: FontWeight.w800)),
             const SizedBox(height: 8),
@@ -794,6 +857,15 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
         ),
       ),
     );
+  }
+
+  static const _langNames = {
+    'hi': 'Hindi', 'ta': 'Tamil', 'te': 'Telugu', 'ml': 'Malayalam', 'kn': 'Kannada',
+    'bn': 'Bengali', 'en': 'English', 'ja': 'Japanese', 'mr': 'Marathi',
+  };
+  String _langName(HlsAudio a) {
+    final en = _langNames[a.lang] ?? a.lang.toUpperCase();
+    return a.name.isEmpty || a.name == en ? en : '$en · ${a.name}';
   }
 
   @override
@@ -894,10 +966,11 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
                   Text(
-                      '${_ep.label}  •  Hindi${_streams.isNotEmpty ? '  •  ${_streams[_server].server}' : ''}',
+                      '${_ep.label}  •  ${_master == null ? 'Hindi' : _langName(_master!.audios.firstWhere((a) => a.lang == _lang, orElse: () => const HlsAudio('Hindi', 'hi', ''))).split(' ·').first}${_quality != null && _master != null ? '  •  ${_master!.variants[_quality!].label}' : ''}${_streams.isNotEmpty ? '  •  ${_streams[_server].server}' : ''}',
                       style: const TextStyle(color: AppColors.textDim, fontSize: 12)),
                 ]),
               ),
+              IconButton(icon: const Icon(Icons.translate_rounded), onPressed: _sheet),
               IconButton(icon: const Icon(Icons.lock_open_rounded), onPressed: () => setState(() => _locked = true)),
               IconButton(icon: const Icon(Icons.tune_rounded), onPressed: _sheet),
             ]),

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -281,4 +282,127 @@ class HindiApi {
       (await SharedPreferences.getInstance()).getInt('hpos:$link') ?? 0;
   Future<void> savePosition(String link, int s) async =>
       (await SharedPreferences.getInstance()).setInt('hpos:$link', s);
+}
+
+// ---------------- HLS audio-language & quality control ----------------
+class HlsAudio {
+  final String name;
+  final String lang;
+  final String line;
+  const HlsAudio(this.name, this.lang, this.line);
+}
+
+class HlsVariant {
+  final String info;
+  final String uri;
+  final int height;
+  final int bandwidth;
+  const HlsVariant(this.info, this.uri, this.height, this.bandwidth);
+  String get label => height > 0 ? '${height}p' : '${(bandwidth / 1000).round()} kbps';
+}
+
+class HlsMaster {
+  final Uri url;
+  final List<String> header;
+  final List<HlsAudio> audios;
+  final List<HlsVariant> variants;
+  const HlsMaster(this.url, this.header, this.audios, this.variants);
+
+  static String _attr(String line, String key) =>
+      RegExp('$key="?([^",]*)"?').firstMatch(line)?.group(1) ?? '';
+
+  static String _absUri(String line, Uri base) => line.replaceAllMapped(
+      RegExp(r'URI="([^"]+)"'), (m) => 'URI="${base.resolve(m.group(1)!)}"');
+
+  static HlsMaster parse(String text, Uri url) {
+    final header = <String>[];
+    final audios = <HlsAudio>[];
+    final variants = <HlsVariant>[];
+    final lines = text.split(RegExp(r'\r?\n'));
+    for (var i = 0; i < lines.length; i++) {
+      final l = lines[i].trim();
+      if (l.isEmpty) continue;
+      if (l.startsWith('#EXT-X-MEDIA') && l.contains('TYPE=AUDIO')) {
+        audios.add(HlsAudio(_attr(l, 'NAME'), _attr(l, 'LANGUAGE'), _absUri(l, url)));
+      } else if (l.startsWith('#EXT-X-STREAM-INF')) {
+        var j = i + 1;
+        while (j < lines.length && (lines[j].trim().isEmpty || lines[j].startsWith('#'))) {
+          j++;
+        }
+        if (j >= lines.length) break;
+        final res = _attr(l, 'RESOLUTION');
+        final h = res.contains('x') ? int.tryParse(res.split('x').last) ?? 0 : 0;
+        variants.add(HlsVariant(l, url.resolve(lines[j].trim()).toString(), h,
+            int.tryParse(_attr(l, 'BANDWIDTH')) ?? 0));
+        i = j;
+      } else if (l.startsWith('#') && !l.startsWith('#EXTM3U')) {
+        header.add(_absUri(l, url));
+      }
+    }
+    variants.sort((a, b) => b.bandwidth.compareTo(a.bandwidth));
+    return HlsMaster(url, header, audios, variants);
+  }
+
+  /// Builds a playlist with only the chosen audio language (forced default)
+  /// and either every quality (auto) or a single chosen quality.
+  String build({String? lang, int? variant}) {
+    final b = StringBuffer('#EXTM3U\n');
+    for (final h in header) {
+      b.writeln(h);
+    }
+    if (audios.isNotEmpty) {
+      final pick = audios.firstWhere((a) => a.lang == lang, orElse: () => audios.first);
+      b.writeln(pick.line
+          .replaceAll(RegExp(r'DEFAULT=(YES|NO)'), 'DEFAULT=YES')
+          .replaceAll(RegExp(r'AUTOSELECT=(YES|NO)'), 'AUTOSELECT=YES'));
+    }
+    final vs = variant == null || variant >= variants.length ? variants : [variants[variant]];
+    for (final v in vs) {
+      b.writeln(v.info);
+      b.writeln(v.uri);
+    }
+    return b.toString();
+  }
+}
+
+/// Tiny local server that hands the rewritten playlist to the video player.
+class LocalHls {
+  LocalHls._();
+  static final instance = LocalHls._();
+  HttpServer? _server;
+  final _docs = <String, String>{};
+  int _n = 0;
+
+  Future<String> serve(String playlist) async {
+    _server ??= await HttpServer.bind(InternetAddress.loopbackIPv4, 0)
+      ..listen((req) {
+        final body = _docs[req.uri.pathSegments.isEmpty ? '' : req.uri.pathSegments.last];
+        req.response.statusCode = body == null ? 404 : 200;
+        req.response.headers.set('Content-Type', 'application/vnd.apple.mpegurl');
+        req.response.write(body ?? '');
+        req.response.close();
+      });
+    final id = 'p${_n++}.m3u8';
+    _docs[id] = playlist;
+    if (_docs.length > 20) _docs.remove(_docs.keys.first);
+    return 'http://127.0.0.1:${_server!.port}/$id';
+  }
+}
+
+extension HindiMaster on HindiApi {
+  Future<HlsMaster?> master(HindiStream s) async {
+    try {
+      final u = Uri.parse(s.url);
+      final r = await http.get(u, headers: {if (s.referer != null) 'Referer': s.referer!})
+          .timeout(const Duration(seconds: 20));
+      if (r.statusCode != 200 || !r.body.contains('#EXTM3U')) return null;
+      final m = HlsMaster.parse(r.body, u);
+      return m.variants.isEmpty ? null : m;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String> audioLang() async => (await SharedPreferences.getInstance()).getString('hindiAudio') ?? 'hi';
+  Future<void> setAudioLang(String l) async => (await SharedPreferences.getInstance()).setString('hindiAudio', l);
 }
