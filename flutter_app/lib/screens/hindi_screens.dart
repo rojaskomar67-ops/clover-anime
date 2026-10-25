@@ -176,13 +176,23 @@ class _HindiHomeScreenState extends State<HindiHomeScreen> {
   @override
   void initState() {
     super.initState();
+    HindiApi.instance.changes.addListener(_reloadUser);
     _t = Timer.periodic(const Duration(seconds: 6), (_) {
       if (mounted) setState(() => _hero++);
     });
   }
 
+  void _reloadUser() {
+    if (!mounted) return;
+    setState(() {
+      _hist = HindiApi.instance.history();
+      _saved = HindiApi.instance.saved();
+    });
+  }
+
   @override
   void dispose() {
+    HindiApi.instance.changes.removeListener(_reloadUser);
     _t?.cancel();
     super.dispose();
   }
@@ -417,10 +427,33 @@ class _HindiDetailScreenState extends State<HindiDetailScreen> {
   late Future<HindiDetail> _f = HindiApi.instance.detail(widget.anime);
   int _season = 0;
   bool _saved = false;
+  Map<String, dynamic>? _last;
+  Set<int> _done = {};
+  bool _seasonSet = false;
+
+  Future<void> _refreshProgress() async {
+    final d = await _f;
+    final l = await HindiApi.instance.last(widget.anime);
+    final w = await HindiApi.instance.watched(widget.anime, d.episodes.length);
+    if (!mounted) return;
+    setState(() {
+      _last = l;
+      _done = w;
+      if (!_seasonSet && l != null) {
+        final i = (l['i'] as num).toInt();
+        if (i < d.episodes.length) {
+          final seasons = d.episodes.map((e) => e.season).toSet().toList()..sort();
+          _season = seasons.indexOf(d.episodes[i].season).clamp(0, seasons.length);
+        }
+        _seasonSet = true;
+      }
+    });
+  }
 
   @override
   void initState() {
     super.initState();
+    _refreshProgress();
     HindiApi.instance.isSaved(widget.anime).then((v) {
       if (mounted) setState(() => _saved = v);
     });
@@ -428,7 +461,31 @@ class _HindiDetailScreenState extends State<HindiDetailScreen> {
 
   void _play(List<HindiEpisode> eps, int i) {
     HindiApi.instance.addHistory(widget.anime);
-    Navigator.of(context).push(fadeRoute(HindiPlayerScreen(anime: widget.anime, episodes: eps, index: i)));
+    Navigator.of(context)
+        .push(fadeRoute(HindiPlayerScreen(anime: widget.anime, episodes: eps, index: i)))
+        .then((_) => _refreshProgress());
+  }
+
+  int? _resumeIndex(List<HindiEpisode> eps) {
+    final l = _last;
+    if (l == null) return null;
+    final i = (l['i'] as num).toInt();
+    if (i >= eps.length) return null;
+    final pos = (l['pos'] as num).toInt(), dur = (l['dur'] as num).toInt();
+    // Finished → next episode (crosses into the next season too).
+    if (dur > 0 && dur - pos < 30) return i + 1 < eps.length ? i + 1 : i;
+    return i;
+  }
+
+  String _playLabel(List<HindiEpisode> eps, HindiAnime a, int? sel) {
+    final r = _resumeIndex(eps);
+    if (r == null) return a.isMovie ? 'Play movie' : 'Play ${sel != null ? 'S$sel ' : ''}EP 1';
+    final l = _last!;
+    final same = r == (l['i'] as num).toInt();
+    final pos = (l['pos'] as num).toInt();
+    if (!same) return 'Play next · ${eps[r].label}';
+    final m = (pos ~/ 60).toString().padLeft(2, '0'), s = (pos % 60).toString().padLeft(2, '0');
+    return a.isMovie ? 'Resume · $m:$s' : 'Continue ${eps[r].label} · $m:$s';
   }
 
   @override
@@ -496,9 +553,11 @@ class _HindiDetailScreenState extends State<HindiDetailScreen> {
                     height: 50,
                     child: FilledButton.icon(
                       style: FilledButton.styleFrom(backgroundColor: hindiAccent, foregroundColor: Colors.black),
-                      onPressed: eps.isEmpty ? null : () => _play(eps, shown.isEmpty ? 0 : shown.first),
+                      onPressed: eps.isEmpty
+                          ? null
+                          : () => _play(eps, _resumeIndex(eps) ?? (shown.isEmpty ? 0 : shown.first)),
                       icon: const Icon(Icons.play_arrow_rounded),
-                      label: Text(a.isMovie ? 'Play movie' : 'Play ${seasons.length > 1 ? 'S$sel ' : ''}EP 1',
+                      label: Text(_playLabel(eps, a, seasons.length > 1 ? sel : null),
                           style: const TextStyle(fontWeight: FontWeight.w800)),
                     ),
                   ),
@@ -566,8 +625,19 @@ class _HindiDetailScreenState extends State<HindiDetailScreen> {
                               borderRadius: BorderRadius.circular(12),
                               border: Border.all(color: AppColors.border),
                             ),
-                            child: Text('EP ${eps[i].number}',
-                                style: const TextStyle(fontWeight: FontWeight.w800)),
+                            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                              if (_done.contains(i))
+                                const Padding(
+                                  padding: EdgeInsets.only(right: 4),
+                                  child: Icon(Icons.check_circle_rounded, size: 14, color: hindiAccent),
+                                ),
+                              Text('EP ${eps[i].number}',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      color: _last != null && (_last!['i'] as num).toInt() == i
+                                          ? hindiAccent
+                                          : null)),
+                            ]),
                           ),
                         );
                       },
@@ -628,7 +698,7 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
     _load();
     _save = Timer.periodic(const Duration(seconds: 5), (_) {
       final v = _vc?.value;
-      if (v != null && v.isInitialized) HindiApi.instance.savePosition(_ep.link, v.position.inSeconds);
+      if (v != null && v.isInitialized && v.isPlaying) _persist();
     });
   }
 
@@ -637,9 +707,9 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
     _hide?.cancel();
     _save?.cancel();
     _cd?.cancel();
+    _bannerT?.cancel();
     _sleep.cancel();
-    final v = _vc?.value;
-    if (v != null && v.isInitialized) HindiApi.instance.savePosition(_ep.link, v.position.inSeconds);
+    _persist();
     _vc?.dispose();
     WakelockPlus.disable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -728,12 +798,38 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
         if (_sleep.endOfEpisode) {
           _sleep.cancel();
           _vc?.pause();
-        } else if (Library.instance.autoPlayNext && _i < widget.episodes.length - 1) {
+        } else if (_i >= widget.episodes.length - 1) {
+          _persist();
+          _showBanner(widget.anime.isMovie ? 'Movie finished' : 'You finished ${widget.anime.title}! 🎉');
+        } else if (Library.instance.autoPlayNext) {
+          _persist();
+          if (widget.episodes[_i + 1].season != _ep.season) {
+            _showBanner('Season ${_ep.season} finished. Season ${widget.episodes[_i + 1].season} is up next');
+          }
           _startCountdown();
         }
       }
     }
     setState(() {});
+  }
+
+  void _persist() {
+    final v = _vc?.value;
+    if (v == null || !v.isInitialized || v.duration == Duration.zero) return;
+    final pos = v.position.inSeconds, dur = v.duration.inSeconds;
+    // Finished episodes restart from the beginning next time.
+    HindiApi.instance.savePosition(_ep.link, dur - pos < 30 ? 0 : pos);
+    HindiApi.instance.saveLast(widget.anime, _i, _ep.label, pos, dur);
+  }
+
+  String? _banner;
+  Timer? _bannerT;
+  void _showBanner(String t) {
+    _bannerT?.cancel();
+    setState(() => _banner = t);
+    _bannerT = Timer(const Duration(seconds: 5), () {
+      if (mounted) setState(() => _banner = null);
+    });
   }
 
   void _startCountdown() {
@@ -750,6 +846,12 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
   }
 
   void _goto(int i) {
+    _persist();
+    if (i < 0 || i >= widget.episodes.length) return;
+    final from = widget.episodes[_i].season, to = widget.episodes[i].season;
+    if (to != from && i == _i + 1) {
+      _showBanner('Season $from complete!  Starting Season $to · EP ${widget.episodes[i].number}');
+    }
     _cd?.cancel();
     _countdown = null;
     _introSkipped = false;
@@ -976,6 +1078,28 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
               ]),
             ),
           HoldSpeedBadge(visible: _hold.active),
+          Align(
+            alignment: const Alignment(0, -0.55),
+            child: IgnorePointer(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 350),
+                transitionBuilder: (c, a) => FadeTransition(
+                    opacity: a, child: SlideTransition(position: Tween(begin: const Offset(0, -0.4), end: Offset.zero).animate(a), child: c)),
+                child: _banner == null
+                    ? const SizedBox.shrink()
+                    : Container(
+                        key: ValueKey(_banner),
+                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: hindiAccent,
+                          borderRadius: BorderRadius.circular(30),
+                        ),
+                        child: Text(_banner!,
+                            style: const TextStyle(color: Colors.black, fontWeight: FontWeight.w800)),
+                      ),
+              ),
+            ),
+          ),
           if (ready && !_locked) ..._overlayButtons(c),
           if (_countdown != null && _countdown! > 0)
             Positioned(
@@ -983,7 +1107,9 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
               bottom: 90,
               child: UpNextCard(
                 seconds: _countdown!,
-                title: widget.episodes[_i + 1].label,
+                title: widget.episodes[_i + 1].season != _ep.season
+                    ? 'New season · ${widget.episodes[_i + 1].label}'
+                    : widget.episodes[_i + 1].label,
                 accent: hindiAccent,
                 onPlay: () => _goto(_i + 1),
                 onCancel: () {
@@ -1122,6 +1248,21 @@ class _HindiPlayerScreenState extends State<HindiPlayerScreen> {
                       '${_ep.label}  •  ${_master == null ? 'Hindi' : _langName(_master!.audios.firstWhere((a) => a.lang == _lang, orElse: () => const HlsAudio('Hindi', 'hi', ''))).split(' ·').first}${_quality != null && _master != null ? '  •  ${_master!.variants[_quality!].label}' : ''}${_streams.isNotEmpty ? '  •  ${_streams[_server].server}' : ''}',
                       style: const TextStyle(color: AppColors.textDim, fontSize: 12)),
                 ]),
+              ),
+              IconButton(
+                tooltip: 'Auto-play',
+                icon: Icon(Library.instance.autoPlayNext ? Icons.repeat_on_rounded : Icons.repeat_rounded,
+                    color: Library.instance.autoPlayNext ? hindiAccent : Colors.white),
+                onPressed: () {
+                  final v = !Library.instance.autoPlayNext;
+                  Library.instance.setAutoNext(v);
+                  if (!v) {
+                    _cd?.cancel();
+                    _countdown = null;
+                  }
+                  setState(() {});
+                  _showBanner(v ? 'Auto-play ON' : 'Auto-play OFF');
+                },
               ),
               IconButton(icon: const Icon(Icons.playlist_play_rounded), onPressed: _episodes),
               IconButton(icon: const Icon(Icons.translate_rounded), onPressed: _sheet),

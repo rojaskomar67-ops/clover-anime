@@ -111,6 +111,7 @@ class HindiApi {
     'Latest Anime Movies',
   ];
 
+  final changes = ValueNotifier<int>(0);
   List<HindiSection>? _home;
   DateTime? _homeAt;
   final _details = <String, HindiDetail>{};
@@ -276,6 +277,27 @@ class HindiApi {
     l.removeWhere((x) => x.link == a.link);
     await _writeList('hindiSaved', had ? l : [a, ...l]);
     return !had;
+  }
+
+  Future<void> saveLast(HindiAnime a, int index, String label, int pos, int dur) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString('hlast:${a.link}', jsonEncode({'i': index, 'label': label, 'pos': pos, 'dur': dur}));
+    if (dur > 0 && pos / dur > 0.9) await p.setBool('hdone:${a.link}#$index', true);
+    final h = (await history())..removeWhere((x) => x.link == a.link);
+    final item = HindiAnime(
+        id: a.id, title: a.title, link: a.link, poster: a.poster, languages: '▶ $label', badge: null);
+    await _writeList('hindiHistory', [item, ...h]);
+    changes.value++;
+  }
+
+  Future<Map<String, dynamic>?> last(HindiAnime a) async {
+    final r = (await SharedPreferences.getInstance()).getString('hlast:${a.link}');
+    return r == null ? null : Map<String, dynamic>.from(jsonDecode(r));
+  }
+
+  Future<Set<int>> watched(HindiAnime a, int count) async {
+    final p = await SharedPreferences.getInstance();
+    return {for (var i = 0; i < count; i++) if (p.getBool('hdone:${a.link}#$i') == true) i};
   }
 
   Future<int> position(String link) async =>

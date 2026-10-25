@@ -112,7 +112,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (mounted) setState(() => _error = 'No working server found for this episode.');
   }
 
+  String? _vcEp;
   Future<bool> _tryServer(ServerItem? s) async {
+    final live = (_vc?.value.isInitialized ?? false) && _vcEp == _ep.id
+        ? _vc!.value.position.inMilliseconds
+        : null;
+    if (live != null) {
+      _saveProgress();
+      _vc?.pause();
+    }
     setState(() {
       _server = s;
       _status = 'Connecting to ${s?.name ?? 'server'}...';
@@ -129,10 +137,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       old?.removeListener(_onTick);
       await old?.dispose();
       _vc = c;
+      _vcEp = _ep.id;
       _stream = info;
       c.addListener(_onTick);
       await c.setPlaybackSpeed(lib.playbackSpeed);
-      final saved = lib.savedPosition(_ep.id);
+      final saved = live ?? lib.savedPosition(_ep.id);
       if (saved > 5000 && saved < c.value.duration.inMilliseconds - 15000) {
         await c.seekTo(Duration(milliseconds: saved));
       }
@@ -430,6 +439,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ),
             _topBtn(Icons.dns_rounded, 'Server', _serverSheet),
             _topBtn(Icons.closed_caption_rounded, 'Subtitles', _subtitleSheet),
+            IconButton(
+              tooltip: 'Auto-play',
+              icon: Icon(lib.autoPlayNext ? Icons.repeat_on_rounded : Icons.repeat_rounded,
+                  color: lib.autoPlayNext ? AppColors.primary : Colors.white),
+              onPressed: () {
+                final v = !lib.autoPlayNext;
+                lib.setAutoNext(v);
+                if (!v) {
+                  _nextTimer?.cancel();
+                  _nextCountdown = null;
+                }
+                setState(() {});
+                toast(context, v ? 'Auto-play ON' : 'Auto-play OFF');
+              },
+            ),
             _topBtn(Icons.playlist_play_rounded, 'Episodes', _episodeSheet),
             _topBtn(Icons.tune_rounded, 'Settings', _settingsSheet),
           ]),
