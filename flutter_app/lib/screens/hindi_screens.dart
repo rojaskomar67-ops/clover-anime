@@ -171,16 +171,11 @@ class _HindiHomeScreenState extends State<HindiHomeScreen> {
   late Future<List<HindiSection>> _f = HindiApi.instance.home();
   late Future<List<HindiAnime>> _hist = HindiApi.instance.history();
   late Future<List<HindiAnime>> _saved = HindiApi.instance.saved();
-  int _hero = 0;
-  Timer? _t;
 
   @override
   void initState() {
     super.initState();
     HindiApi.instance.changes.addListener(_reloadUser);
-    _t = Timer.periodic(const Duration(seconds: 6), (_) {
-      if (mounted) setState(() => _hero++);
-    });
   }
 
   void _reloadUser() {
@@ -194,7 +189,6 @@ class _HindiHomeScreenState extends State<HindiHomeScreen> {
   @override
   void dispose() {
     HindiApi.instance.changes.removeListener(_reloadUser);
-    _t?.cancel();
     super.dispose();
   }
 
@@ -250,18 +244,22 @@ class _HindiHomeScreenState extends State<HindiHomeScreen> {
               }
               final sections = snap.data!;
               final heroList = sections.first.items.take(8).toList();
-              final hero = heroList[_hero % heroList.length];
               return CustomScrollView(
                 physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
                 slivers: [
-                  SliverToBoxAdapter(child: _heroCard(hero)),
+                  SliverToBoxAdapter(child: HindiHeroSlider(items: heroList)),
                   SliverToBoxAdapter(child: _userRow('Continue watching', Icons.history_rounded, _hist)),
                   SliverToBoxAdapter(child: _userRow('My Hindi list', Icons.bookmark_rounded, _saved)),
-                  for (final s in sections) ...[
+                  for (final (n, s) in sections.indexed) ...[
                     SliverToBoxAdapter(
-                      child: SectionHeader(s.title, icon: _icons[s.title] ?? Icons.translate_rounded),
+                      child: FadeIn(
+                        delay: Duration(milliseconds: 80 * (n % 6)),
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          SectionHeader(s.title, icon: _icons[s.title] ?? Icons.translate_rounded),
+                          _HindiRow(s.items),
+                        ]),
+                      ),
                     ),
-                    SliverToBoxAdapter(child: _HindiRow(s.items)),
                   ],
                   const SliverToBoxAdapter(child: SizedBox(height: 110)),
                 ],
@@ -283,48 +281,178 @@ class _HindiHomeScreenState extends State<HindiHomeScreen> {
         },
       );
 
-  Widget _heroCard(HindiAnime a) => SizedBox(
-        height: 440,
-        child: Stack(fit: StackFit.expand, children: [
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 700),
-            child: NetImage(a.poster, key: ValueKey(a.link)),
+}
+
+
+/// Auto-sliding, swipeable hero carousel with parallax, Ken Burns zoom and dots.
+class HindiHeroSlider extends StatefulWidget {
+  final List<HindiAnime> items;
+  const HindiHeroSlider({super.key, required this.items});
+  @override
+  State<HindiHeroSlider> createState() => _HindiHeroSliderState();
+}
+
+class _HindiHeroSliderState extends State<HindiHeroSlider> {
+  final _pc = PageController();
+  Timer? _t;
+  double _page = 0;
+  int _i = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pc.addListener(() => setState(() => _page = _pc.page ?? 0));
+    _start();
+  }
+
+  void _start() {
+    _t?.cancel();
+    _t = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!mounted || !_pc.hasClients || widget.items.length < 2) return;
+      final n = (_i + 1) % widget.items.length;
+      if (n == 0) {
+        _pc.jumpToPage(0);
+      } else {
+        _pc.animateToPage(n, duration: const Duration(milliseconds: 800), curve: Curves.easeInOutCubic);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _t?.cancel();
+    _pc.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final items = widget.items;
+    final h = MediaQuery.sizeOf(context).width >= 720 ? 480.0 : 460.0;
+    return SizedBox(
+      height: h,
+      child: Stack(children: [
+        Listener(
+          onPointerDown: (_) => _t?.cancel(),
+          onPointerUp: (_) => _start(),
+          child: PageView.builder(
+            controller: _pc,
+            itemCount: items.length,
+            onPageChanged: (i) => setState(() => _i = i),
+            itemBuilder: (_, i) => _slide(items[i], i - _page, i == _i),
           ),
-          const DecoratedBox(decoration: BoxDecoration(gradient: AppColors.heroGradient)),
-          Positioned(
-            left: 18,
-            right: 18,
-            bottom: 18,
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 500),
-              child: Column(
-                key: ValueKey(a.link),
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Badge2('HINDI DUB', color: hindiAccent, icon: Icons.translate_rounded),
-                  const SizedBox(height: 8),
-                  Text(a.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900, height: 1.1)),
-                  if (a.badge != null || a.languages != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: Text([a.badge, a.languages].whereType<String>().join('  •  '),
-                          style: const TextStyle(color: AppColors.textDim)),
-                    ),
-                  const SizedBox(height: 14),
-                  FilledButton.icon(
-                    style: FilledButton.styleFrom(backgroundColor: hindiAccent, foregroundColor: Colors.black),
-                    onPressed: () => openHindi(context, a),
-                    icon: const Icon(Icons.play_arrow_rounded),
-                    label: const Text('Watch in Hindi', style: TextStyle(fontWeight: FontWeight.w800)),
-                  ),
-                ],
+        ),
+        Positioned(
+          right: 18,
+          bottom: 26,
+          child: Row(children: [
+            for (var i = 0; i < items.length; i++)
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 350),
+                curve: Curves.easeOut,
+                margin: const EdgeInsets.only(left: 5),
+                width: i == _i ? 22 : 7,
+                height: 7,
+                decoration: BoxDecoration(
+                  color: i == _i ? hindiAccent : Colors.white30,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  Widget _slide(HindiAnime a, double off, bool active) => Pressable(
+        onTap: () => openHindi(context, a),
+        child: ClipRect(
+          child: Stack(fit: StackFit.expand, children: [
+            Transform.translate(
+              offset: Offset(off * -120, 0),
+              child: TweenAnimationBuilder<double>(
+                key: ValueKey('${a.link}$active'),
+                tween: Tween(begin: 1.0, end: active ? 1.12 : 1.0),
+                duration: const Duration(seconds: 6),
+                builder: (_, z, child) => Transform.scale(scale: z, child: child),
+                child: NetImage(a.poster),
               ),
             ),
-          ),
-        ]),
+            const DecoratedBox(decoration: BoxDecoration(gradient: AppColors.heroGradient)),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomLeft,
+                  end: Alignment.topRight,
+                  colors: [hindiAccent.withValues(alpha: 0.18), Colors.transparent],
+                  stops: const [0, 0.6],
+                ),
+              ),
+            ),
+            Positioned(
+              left: 18,
+              right: 18,
+              bottom: 50,
+              child: AnimatedSlide(
+                offset: active ? Offset.zero : const Offset(0, 0.25),
+                duration: const Duration(milliseconds: 600),
+                curve: Curves.easeOutCubic,
+                child: AnimatedOpacity(
+                  opacity: active ? 1 : 0,
+                  duration: const Duration(milliseconds: 500),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Wrap(spacing: 6, runSpacing: 6, children: [
+                      const Badge2('HINDI DUB', color: hindiAccent, icon: Icons.translate_rounded),
+                      if (a.isMovie) const Badge2('MOVIE', color: Color(0xFF7FB8FF)),
+                      if (a.badge != null) Badge2(a.badge!),
+                    ]),
+                    const SizedBox(height: 10),
+                    Text(a.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w900,
+                            height: 1.1,
+                            shadows: [Shadow(blurRadius: 16, color: Colors.black)])),
+                    if (a.languages != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(a.languages!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: AppColors.textDim)),
+                      ),
+                    const SizedBox(height: 14),
+                    Row(children: [
+                      FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                            backgroundColor: hindiAccent,
+                            foregroundColor: Colors.black,
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14)),
+                        onPressed: () => openHindi(context, a),
+                        icon: const Icon(Icons.play_arrow_rounded),
+                        label: const Text('Watch in Hindi', style: TextStyle(fontWeight: FontWeight.w800)),
+                      ),
+                      const SizedBox(width: 10),
+                      IconButton.filledTonal(
+                        onPressed: () async {
+                          final on = await HindiApi.instance.toggleSaved(a);
+                          HindiApi.instance.changes.value++;
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(on ? 'Added to My Hindi list' : 'Removed from list')));
+                          }
+                        },
+                        icon: const Icon(Icons.bookmark_add_outlined),
+                      ),
+                    ]),
+                  ]),
+                ),
+              ),
+            ),
+          ]),
+        ),
       );
 }
 
